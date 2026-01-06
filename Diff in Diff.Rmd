@@ -1,9 +1,4 @@
----
-title: "PS4_DiD"
-author: "xx to complete later"
-date: "2025-12-09"
-output: pdf
----
+
 
 ```{r}
 
@@ -428,5 +423,6 @@ kable(results_table_c, caption = "Simulation results with clustered SE", ) %>%
 Increasing the number of individuals per group period cell  doesn’t fix the standard error bias caused by group-period shocks. Under what assumptions does clustering actually give valid inference in DiD, and what kind of asymptotic assumptions are we implicitly relying on in applied work?
 
 Are there newer methods for estimating standard errors in DiD that improve on clustering, for example by accounting for treatment effect heterogeneity or using bootstrap, and how do they compare in small samples?
+
 
 
