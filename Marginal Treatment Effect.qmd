@@ -1,22 +1,4 @@
----
-title: "ATM PS3"
-subtitle: "Bertoni, Biquet, Garcia Seminario, Rickards"
-autor: "Sarah Bertoni"
-date:  28 November 2025
-format:
-  pdf: 
-    code-overflow: wrap
-editor: visual
-output: 
-  html_document:
-    theme: cosmo
-    latex_engine: pdflatex
-    huxreg_options: "tabular={l|ccc}, tablewidth=0.05\\textwidth, tablefont=\\footnotesize"
-    fig_caption: true
-execute:
-  echo: false
-  warning: false
----
+
 
 # Estimating a marginal treatment effect model
 
@@ -702,3 +684,4 @@ The estimate would be biased if the exclusion restriction does not hold; for exa
 ## Question 10
 
 I don't understand the uniformity assumption of U. What if we believe that there are systematically more eager individuals in the entire population than reluctant ones? Can a transformation of the error term (such as wwhat we did with the probit model) apply here ? Why, despite the fact that we defined V s being normally distributed, do we continue speaking of U - what is u's interpretation ?
+
