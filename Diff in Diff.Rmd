@@ -1,0 +1,432 @@
+---
+title: "PS4_DiD"
+author: "xx to complete later"
+date: "2025-12-09"
+output: pdf
+---
+
+```{r}
+
+library(kableExtra)
+
+simulation = function(n = 100, G = 2, TT = 2, tau = 0 , sigv = 0 ){
+  
+  require (dplyr)
+  
+  alpha = rnorm(G) # Group shocks
+  lambda = rnorm(TT) # Period shocks
+  matv = matrix(rnorm(G*TT), nrow=G, ncol=TT) # Group x period shocks
+  
+  # Treatment :
+  treat_g = sample(1:G, size = G/2)
+  
+  dataf = expand.grid(group = 1:G, period = 1:TT, ind = 1:n)
+  dataf$treated = (dataf$group %in% treat_g) * (dataf$period > TT/2)
+  
+  dataf = dataf %>%
+    group_by(group, period) %>%
+    mutate (group_per_id = cur_group_id( ))
+  
+  dataf$Y = alpha[dataf$group] + # alpha_j
+    lambda[dataf$period] + # lambda_t
+    tau * dataf$treated + # tau X T_jt
+    sigv * matv[cbind(dataf$group, dataf$period)] + # sigma_v X v
+    rnorm(nrow(dataf)) # epsilon_ijt
+
+  dataf$group = as.factor(dataf$group)
+  dataf$period = as.factor(dataf$period)
+  dataf$group_per_id = as.factor(dataf$group_per_id)
+  
+  return(dataf)
+}
+
+difdif = function (dataf, se_type = "HC2" ){
+  require (estimatr)
+  est = lm_robust(Y ~ group + period + treated , data = dataf,
+                  se_type = se_type )
+  
+  return( c(
+    coef = unname(est$coefficients ["treated"]) ,
+    stde = unname(est$std.error["treated"])
+    )
+  )
+  }
+```
+
+# QUESTION 1
+
+The estimator that estimates the average treatment effect for the treated is the TWFE estimator, which in this case also corresponds to the DiD estimator because we have a 2 group and 2 periods, with a treatment effect that is assumed to be constant in the simulation and equal to 0. It is estimated thanks to the regression model that controls for group and time fixed effects with an additional term to capture the effect of the treatment on the treated group over time.
+
+The estimator that estimates the variance is sandwich variance estimator which allows the variance of the residual to differ across observations. HC2 corrects variance estimators that assume homoskedasticity by inflating residuals according to their leverage on the fitted line. Such observations have a larger impact on the fitted line and smaller residuals, which leads to a lower variance estimate. HC2 standard errors correct for this. This estimator performs better in small samples, reducing small samples biases.
+
+```{r}
+
+set.seed(666)
+
+applied_simulations <- function(S, n, sigv, G, TT) {
+  
+  simulation_difdif <- data.frame(
+    coef = numeric(S),
+    se   = numeric(S)
+  )
+  
+  for (i in 1:S) {
+  
+    matrix_i <- simulation(n, G, TT, tau = 0, sigv = sigv)
+    difdif_i <- difdif(matrix_i)
+    simulation_difdif$coef[i] <- difdif_i["coef"]
+    simulation_difdif$se[i]   <- difdif_i["stde"]
+  }
+  
+  return(simulation_difdif)
+}
+```
+
+
+# QUESTION 2
+
+
+## a)
+
+```{r}
+
+simulation_1 <- applied_simulations(S = 500, n = 10, sigv = 0, G = 2, TT = 2)
+
+average_tau <- mean(simulation_1$coef)
+
+
+```
+
+The value of the estimated treatment effect ($\frac{1}{S} \sum_{s=1}^S\hat{\tau} = 0.023$) is very close to the true value of the treatment effect ($\tau = 0$). This indicates that the difference-in-differences estimator is likely unbiased. The small difference is due to the sample being finite and would approach zero as number of simulations approaches infinity; nontheless, the estimate is not statistically different form zero.
+
+## b)
+
+```{r}
+S <- 500
+average_stde <- mean(simulation_1$se)
+stde_tau <- sd(simulation_1$coef)
+
+results_table <- data.frame(
+  Statistic = c("Average estimate", "Average SE", "SD Estimate"),
+  Value = c(average_tau, average_stde, stde_tau)
+)
+
+
+
+kable(results_table, caption = "Simulation results") %>%  
+  kable_classic("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")  %>%
+  add_header_above(c(" " = 1, " for S=500, n=10, sigma=0, G=2, TT=2"=1))
+
+```
+The value of the standard error ($\frac{1}{S} \sum_{s=1}^S\hat{\sigma}(\hat{\tau_s})$) is very close to the standard deviation ($sd(\hat{\tau_s})$). This indicates that our estimator performs well, at least in small samples. It is important to note that both are relatively large, owing to the small sample size of 10.
+
+
+## c) 
+
+```{r}
+q2c<-applied_simulations(S = 500, n = 100, sigv = 0, G = 2, TT = 2) %>%
+  summarise(
+    average_tau = mean(coef),
+    average_stde = mean(se),
+    stde_tau = sd(coef)
+  )
+
+
+results_table_2c <- data.frame(
+  Statistic = c("Average estimate (tau)", 
+                "Average estimated SE", 
+                "SD Estimate"),
+  Value = c(q2c$average_tau,
+            q2c$average_stde,
+            q2c$stde_tau)
+)
+
+kable(results_table_2c, caption = "Simulation results") %>%  
+  kable_classic("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")  %>%
+  add_header_above(c(" " = 1, " for S=500, n=100, sigma=0, G=2, TT=2"=1))
+
+```
+Notice that the average standard errors are very close to 0, but the average ATT is closer to 0 (the true population estimate). This may be explained by the Law of Large Numbers, whereby increasing sample size n leads sample means to converge in probability to the true population mean.
+
+
+Notice also that the standard errors of estimated ATT have declined and are closer to 0. This difference with the previous estimate may be explained by the fact that single ATT-estimates' standard errors are decreasing in sample size. 
+
+# QUESTION 3
+
+## a)
+Vjt is the group and period specific effect that is explained by variation at the group j and time period t level. We assume it follows a normal distribution. It captures group-period specific shocks. We assume that these shocks are normally distributed across group-periods, thereby making it independent from treatment assignment.
+
+A concrete example is a policy change targeting manufacturing firms, which generates variation both across space and over time. Such a shock may affect outcomes differently across cities and periods. An example for a shock as this one is a climate shocks (ie. droughts) which could impact production levels (final outcome).
+
+
+
+## b)
+```{r}
+q3b<-applied_simulations(S = 500, n = 100, sigv = 0.5, G = 2, TT = 2) %>%
+  summarise(
+    average_tau = mean(coef),
+    average_stde = mean(se),
+    stde_tau = sd(coef)
+  )
+
+
+results_table_3b <- data.frame(
+  Statistic = c("Average estimate (tau)", 
+                "Average estimated SE", 
+                "SD estimate"),
+  Value = c(q3b$average_tau,
+            q3b$average_stde,
+            q3b$stde_tau)
+)
+
+kable(results_table_3b, caption = "Simulation results") %>%  
+  kable_classic("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")  %>%
+  add_header_above(c(" " = 1, " for S=500, n=100, sigma=0.5, G=2, TT=2"=1))
+
+```
+
+
+
+Since we assume that $v_{jt}$ is iid and follow a normal distribution with mean 0 and standard deviation $\sigma_v = 0.5$, then :
+$$\hat{\tau} \rightarrow N(\tau, 4 \sigma_v)$$
+This satisfied the requirement for unbiased estimates:  $E[\hat{\tau}] = \tau$. 
+
+
+The average standard errors, however, are not correctly estimated, since the positive sign of $\sigma_v$ introduces positive intra–cluster correlation at the group–period level: because we do not account for this group-correlation of error terms, standard errors are underestimated. 
+
+The standard deviation over simulations increases slightly, which is consistent with the fact that we introduce random noise at the group and period level. The new variance becomes 4 times $\sigma_v$ instead of just 1 times $\sigma_v$. The estimator is still underestimating the true variance.
+
+
+###c)
+```{r}
+q3c<-applied_simulations(S = 500, n = 1000, sigv = 0.5, G = 2, TT = 2) %>%
+  summarise(
+    average_tau = mean(coef),
+    average_stde = mean(se),
+    stde_tau = sd(coef)
+  )
+
+
+results_table_3c <- data.frame(
+  Statistic = c("Average estimate (tau)", 
+                "Average estimated SE", 
+                "SD estimate"),
+  Value = c(q3c$average_tau,
+            q3c$average_stde,
+            q3c$stde_tau)
+)
+
+kable(results_table_3c, caption = "Simulation results") %>%  
+  kable_classic("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")  %>%
+  add_header_above(c(" " = 1, " for S=500, n=1000, sigma=0.5, G=4, TT=4"=1))
+
+```
+
+By the LLN, we expect that the average estimate will mechanically converge to the true estimate, 0. This explains why increasing sample size makes the average tau closer to 0.
+
+In fact, when $n = 100$, our average estimate is quite noisy. 
+However, as we increase the sample size to $n = 1000$ or let $n \to \infty$, 
+the estimator becomes less biased and more stable. 
+In other words, increasing the sample size decreases the variance of the estimator 
+and improves its accuracy. Thus, the estimate converges to the true parameter as $n$ grows, consistent with the law of large numbers:
+
+$$\hat{\theta}_n \xrightarrow{p} \theta \quad \text{as} \quad n \to \infty$$
+
+The effect of increasing sample size is also to increase standard deviation of the ATT estimates across simulations. The average standard error, however, decrease mechanically due to increased sample size, because it incorrectly considers the new observations as independent. This implies that the reduction in standard errors of tau that is generated by an increase in sample size (from the formula) doers not reflect than the increased variation caused by adding observations that are affected by $v_{jt}$. This results in the average standard error decreasing despite the estimate variance being higher, and the distance between the two measure of variation growing larger
+
+# QUESTION 4
+
+## a)
+
+```{r}
+
+q4sim<-applied_simulations(S = 500, n = 100, sigv = 0.5, G = 4, TT = 4) %>%
+  summarise(
+    average_tau = mean(coef),
+    average_stde = mean(se),
+    stde_tau = sd(coef)
+  )
+
+
+results_table <- data.frame(
+  Statistic = c("Average estimate (tau)", 
+                "Average estimated SE (HC2)", 
+                "Monte Carlo SD"),
+  Value = c(q4sim$average_tau,
+            q4sim$average_stde,
+            q4sim$stde_tau)
+)
+
+kable(results_table, caption = "Simulation results") %>%  
+  kable_classic("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")  %>%
+  add_header_above(c(" " = 1, " for S=500, n=100, sigma=0.5, G=4, TT=4"=1))
+
+
+```
+The average treatement effect is still close to the real value of tau, as it was in the case of two groups; the differences in the estimate are again due to finite sample randomness 
+
+Compared to the case of two groups and higher sample size ($n=1000$), where the variation increased due to the introduction of correlated group-period shocks, the estimate variation is lower. A lower sample size but more groups and periods reduce the variation since the number of independent group-period increases (16 compared to 4 in the case of two groups and two periods), averaging out variability.
+
+The average standard errors are higher than before because of the inclusion of more groups and periods - since leverage effects are partly reduced - but still does not account for the correlation due to non zero $\sigma v$.
+Nonetheless, the bias of the average standard errors (observable when comparing it ot the empirical variation) is smaller.
+
+## b)
+
+
+
+```{r}
+
+#Two-step estimator (group-period averages)
+difdif_two_step = function (dataf, se_type = "HC2") {
+  require(estimatr)
+  library(dplyr)
+  
+  data_avg <- dataf %>%
+    group_by(group, period) %>%
+    summarise(
+      Y_group_period = mean(Y),
+      treated = mean(treated),
+      .groups = "drop"
+    )
+  
+  est <- lm_robust(
+    Y_group_period ~ group + period + treated,
+    data = data_avg,
+    se_type = se_type
+  )
+  
+  return(c(
+    coef = unname(est$coefficients["treated"]),
+    stde = unname(est$std.error["treated"])
+  ))
+}
+
+
+applied_simulations <- function(S, n, sigv, G, TT, se_type = "HC2") {
+  
+  simulation_difdif <- data.frame(
+    coef = numeric(S),
+    se   = numeric(S)
+  )
+  
+  for (i in 1:S) {
+    
+    data_i <- simulation(n, G, TT, tau = 0, sigv = sigv)
+    difdif_i <- difdif_two_step(data_i, se_type = se_type)
+    
+    simulation_difdif$coef[i] <- difdif_i["coef"]
+    simulation_difdif$se[i]   <- difdif_i["stde"]
+  }
+  
+  return(simulation_difdif)
+}
+
+q4b<-applied_simulations(S = 500, n = 100, sigv = 0.5, G = 4, TT = 4) %>%
+  summarise(
+    average_tau = mean(coef),
+    average_stde = mean(se),
+    stde_tau = sd(coef)
+  )
+
+
+
+results_table_b <- data.frame(
+  Statistic = c("Average estimate (tau)", 
+                "Average estimated SE", 
+                "SD Estimate"),
+  Value = c(q4b$average_tau,
+            q4b$average_stde,
+            q4b$stde_tau)
+)
+
+
+kable(results_table_b, caption = "Simulation results for Two step estimation", ) %>%  
+  kable_paper("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left") %>%
+  add_header_above(c(" " = 1, " for S=500, n=100, sigma=0.5, G=4, TT=4"=1))
+
+
+```
+
+The two step estimator does not lead to big changes in the treatment effect - apart form random sample variation -  because it estimates the same ATT, just using a reduced number of observations in the regression since it regresses the average of the outcome variable by groups and periods on group and period dummies, meaning that only one observation per group-period is used.
+
+The average standard error is still biased and smaller than the true variation, since it is computed by assuming independence across rows. While the two-step aggregation reduces the number of rows to one per group-period, the average SE does not correct for correlation, and it is underestimated.
+
+The standard deviation of estimates is slightly smaller than before - because averaging within cells reduces variation of the point estimates. They reflect the true variation because they account for the correlation induced by the group-period shocks, and are equivalent to clustered SE.
+
+
+## c)
+The same result could be achieved by clustering the standard errors at the group-period level. When $\sigma_v > 0$, all individuals in the same group-period cell share the same unobserved shock $v_{jt}$, so observations within a cell are correlated. Ordinary robust SEs assume independence and underestimate variability: clustering at the group-period level fixes this. We cluster standard errors at the group-period level because clustering matters only if the residuals and the regressors of interest are both correlated within cluster (Abadie et al., 2017). Because treatment is given at the group-period level, and the element vjt also varies by group-period, then clustering at this level makes sense. As expected, accounting for clustering increases the SE.
+
+```{r}
+
+difdif_clustered = function(dataf) {
+  require(estimatr)
+  
+  est <- lm_robust(
+    Y ~ group + period + treated,
+    data = dataf,
+    clusters = interaction(dataf$group, dataf$period)
+  )
+  
+  return(c(
+    coef = unname(est$coefficients["treated"]),
+    stde = unname(est$std.error["treated"])
+  ))
+}
+
+
+applied_simulations <- function(S, n, sigv, G, TT) {
+  
+  simulation_difdif <- data.frame(
+    coef = numeric(S),
+    se   = numeric(S)
+  )
+  
+  for (i in 1:S) {
+    
+    data_i <- simulation(n, G, TT, tau = 0, sigv = sigv)
+    difdif_i <- difdif_clustered(data_i)
+    
+    simulation_difdif$coef[i] <- difdif_i["coef"]
+    simulation_difdif$se[i]   <- difdif_i["stde"]
+  }
+  
+  return(simulation_difdif)
+}
+
+
+simulation_clustered <- applied_simulations(S = 500, n = 100, sigv = 0.5, G = 4, TT = 4)
+
+clustered<-simulation_clustered %>%
+  summarise(
+    average_tau = mean(coef),
+    average_stde = mean(se),
+    stde_tau = sd(coef)
+  )
+
+
+
+results_table_c <- data.frame(
+  Statistic = c("Average estimate (tau)", 
+                "Average estimated SE (HC2)", 
+                "Estimate SD"),
+  Value = c(clustered$average_tau,
+            clustered$average_stde,
+            clustered$stde_tau)
+)
+
+
+kable(results_table_c, caption = "Simulation results with clustered SE", ) %>%  
+  kable_paper("hover", full_width = F) %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left") %>%
+  add_header_above(c(" " = 1, " for S=500, n=100, sigma=0.5, G=4, TT=4"=1))
+
+```
+
+
+# QUESTION 5
+
+Increasing the number of individuals per group period cell  doesn’t fix the standard error bias caused by group-period shocks. Under what assumptions does clustering actually give valid inference in DiD, and what kind of asymptotic assumptions are we implicitly relying on in applied work?
+
+Are there newer methods for estimating standard errors in DiD that improve on clustering, for example by accounting for treatment effect heterogeneity or using bootstrap, and how do they compare in small samples?
+
+

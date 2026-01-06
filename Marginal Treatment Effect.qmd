@@ -1,0 +1,704 @@
+---
+title: "ATM PS3"
+subtitle: "Bertoni, Biquet, Garcia Seminario, Rickards"
+autor: "Sarah Bertoni"
+date:  28 November 2025
+format:
+  pdf: 
+    code-overflow: wrap
+editor: visual
+output: 
+  html_document:
+    theme: cosmo
+    latex_engine: pdflatex
+    huxreg_options: "tabular={l|ccc}, tablewidth=0.05\\textwidth, tablefont=\\footnotesize"
+    fig_caption: true
+execute:
+  echo: false
+  warning: false
+---
+
+# Estimating a marginal treatment effect model
+
+```{r}
+## Libraries
+library(haven)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(tidyr)
+library(Amelia)
+library(sandwich)
+library(lmtest)
+library(miceadds)
+library(huxtable)
+library(matrixStats)
+library(float) 
+library(stargazer)
+library(readxl)
+library(gridExtra)
+library(huxtable)
+library(patchwork)
+library(tinytex)
+library(broom)
+library(ggpubr)
+
+```
+
+```{r setup, echo=F,include=F, warning=F ,message=F}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, error = FALSE, warning = FALSE)
+
+# Load libraries
+if (!require("pacman")) install.packages("pacman") 
+pacman::p_load(rio, tidyverse, labelled, modelsummary, kableExtra, huxtable, Hmisc, knitr, gridExtra, stargazer, ivreg, tidygraph, lmtest, sandwich, haven)
+
+# Options for model summary latex output
+options("modelsummary_format_numeric_latex" = "plain")
+
+# Create function to round and format coefficients (might have trailing zeros)
+fmt <- function(x, digits = 2) {
+  format(round(x, digits), nsmall= digits, big.mark = ",")
+}
+```
+
+## Question 1 :
+
+**The analyst proposes to use the distances to schools as instruments for going to a private school. Do you think these variables are good instruments? Under which conditions?**
+
+The use of these instruments relies on three key assumptions. Firstly, that the instruments have an effect on the treatment variable, known as relevance and defined formally as $Cov(Z,T) \neq 0$. In our context, this means that distance to private school and distance to private school relative to distance to public school jointly influence the probability of attending private school. Secondly, that the instruments do not have an effect on the outcome variable, other than through their influence on the treatment variable, this is the exclusion restriction and is defined as $Cov(Z,u)=0$. In this context, it means that there are no unobserved factors correlated with both distance and relative distance to private schools, and test scores. Finally, we need that the instrument influences all individuals' treatment status in the same direction, this is monotonicity and in our context requires that distance and relative distance to private school do not decrease an individual's probability of attending private school. \\\\ We can expect monotonicity and relevance to hold. It is reasonable to assume that individuals are more likely to go to private school if one exists nearby, especially if public schools do not exist nearby. However, the exclusion restriction in this context is more flimsy. One can think of many unobserved characteristics that influence both school proximity and test scores. For example, areas surrounding private schools may systematically differ from areas that are not near private school and as such, parents with high income select into these areas and are also more likely to send their children to private school.
+
+## Question 2: 
+
+**Using a linear regression, regress the dummy of going to a private school on dist to pub and on the difference between dist to pub and dist to pri. Do the same thing using a probit model. Compare the distribution of predicted probabilities for both models and by treatment status. What do you observe?**
+
+We see when comparing the LPM and Probit models that the Probit model bounds values between 0 and 1 whilst the LPM model predicts values outside the \[0,1\] probability range, which isn't internally consistent. Both distributions have a notable mass around the 0.4 region. The Probit model distribution shows a more compressed distribution, owing to the bounded values, and has a greater density between 0.6 and 1, whilst the LPM model exhibits a more standard normal distribution of values. \\ Comparing the models across treatment status, we see that both models predict higher probabilities for those who attend private school, as expected. Both models predict very similar probability distributions for public school students. However, for the private school students, the LPM model predicts values well beyond the upper bound of 1, whilst the Probit model is compressed, with a large mass towards the upper bound.
+
+```{r, echo=F, message=F, results=F}
+data <- read_dta("data.dta")
+
+dt <- data %>% 
+  mutate(dist_diff = (dist_to_pub - dist_to_pri))
+
+model <- lm(Private ~ dist_to_pub + dist_diff, data = dt)
+
+probit <- glm(Private ~ dist_to_pub + dist_diff, family = binomial(link = "probit"),
+                data = dt)
+
+d <- dt %>%
+  mutate(
+    pred_lpm = predict(model, type = "response"),
+    pred_probit = predict(probit, type = "response"),
+    treatment = factor(Private, levels = c(0, 1), 
+                      labels = c("Public School", "Private School"))
+  )
+
+d <- d %>%
+  mutate(
+    pred_lpm = predict(model, type = "response"),
+    pred_probit = predict(probit, type = "response"),
+    treatment = factor(Private, levels = c(0, 1), 
+                      labels = c("Public School", "Private School"))
+  )
+
+p1 <- d %>%
+  select(pred_lpm, pred_probit) %>%
+  pivot_longer(everything(), names_to = "model", values_to = "prediction") %>%
+  mutate(model = recode(model, 
+                        pred_lpm = "Linear Probability Model",
+                        pred_probit = "Probit Model")) %>%
+  ggplot(aes(x = prediction, fill = model)) +
+  geom_histogram(
+                 alpha = 0.6, bins = 50, position = "identity")+
+  labs(title = "Distribution of Predicted Probabilities",
+       subtitle = "Comparing LPM and Probit Models",
+       x = "Predicted Probability",
+       y = "Count",
+       fill = "Model") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+print(p1)
+
+p2 <- d %>%
+  select(treatment, pred_lpm, pred_probit) %>%
+  pivot_longer(cols = c(pred_lpm, pred_probit), 
+               names_to = "model", 
+               values_to = "prediction") %>%
+  mutate(model = recode(model, 
+                        pred_lpm = "Linear Probability Model",
+                        pred_probit = "Probit Model")) %>%
+  ggplot(aes(x = prediction, fill = treatment)) +
+  geom_histogram(alpha = 0.6, bins = 40, position = "identity") +
+    geom_density()+
+  facet_wrap(~model, ncol = 1) +
+  labs(title = "Predicted Probabilities by Actual School Choice",
+       subtitle = "Comparing models and treatment groups",
+       x = "Predicted Probability",
+       y = "Count",
+       fill = "Actual Choice") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+
+print(p2)
+```
+
+## Question 3
+
+**a): Briefly present the control function approach.**
+
+The control function approach addressed endogeneity in the explanatory variables in linear and non-linear models. It is a two-step estimator that explicitly addresses selection. In our context, the first-stage estimates the treatment selection using a Probit model with the distance instruments, then using the predicted values to construct an inverse mills ratio. We then include this as a control variable in the second-stage. This is intended to capture selection on unobservable characteristics, and make the treatment variable exogenous.
+
+**b): Estimate the model with the CF approach.**
+
+We estimate the treatment selection through a Heckit model where:
+
+The control–function terms are: $$
+\lambda_1(p)
+= -\frac{\phi(\Phi^{-1}(p))}{\Phi(\Phi^{-1}(p))}
+$$
+
+and
+
+$$
+\lambda_0(p)
+= \frac{\phi(\Phi^{-1}(p))}{1 - \Phi(\Phi^{-1}(p))}
+$$
+
+And we recover the estimation of the parameters $\alpha_0$ and $\alpha_1$ by estimating the two outcome equations: $$
+\forall i: T_i = 0,\qquad Y_i = \alpha_0 + \delta_0 \lambda_0(p)
+$$ $$
+\forall i: T_i = 1,\qquad Y_i = \alpha_1 + \delta_1 \lambda_1(p)
+$$
+
+```{r, echo=FALSE, message=F, results=T, include=TRUE}
+# For the untreated (T=0): calculates lambda_0 = phi(Zg) / (1 - Phi(Zg))
+lambda_0_n = function(p) dnorm(qnorm(p)) / (1 - pnorm(qnorm(p))) 
+
+# For the treated (T=1): calculates lambda_1 = -phi(Zg) / Phi(Zg)
+lambda_1_n = function(p) -dnorm(qnorm(p)) / pnorm(qnorm(p))
+
+invmills_0 = lambda_0_n(d$pred_probit[d$Private == 0])
+invmills_1 = lambda_1_n(d$pred_probit[d$Private == 1])
+
+lit_0 = lm(d$Literacy[d$Private == 0] ~ invmills_0)
+lit_1 = lm(d$Literacy[d$Private == 1] ~ invmills_1)
+
+num_0 = lm(d$Numeracy[d$Private == 0] ~ invmills_0)
+num_1 = lm(d$Numeracy[d$Private == 1] ~ invmills_1)
+
+#lit_all = lm(Literacy ~ Private + inv)
+
+rr = cbind(c(coef(lit_0)[1],
+        coef(lit_1)[1]), 
+        c(coef(num_0)[1],
+        coef(num_1)[1])
+      )
+colnames(rr) = c("Literacy", "Numeracy")
+rownames(rr) = c("$\\alpha_0$", "$\\alpha_1$")
+kable(rr, caption = "Control Function estimates") %>%
+    kable_styling(bootstrap_options = c("striped", "hover")) 
+
+selec = cbind(c(coef(lit_0)[2],
+        coef(lit_1)[2]), 
+        c(coef(num_0)[2],
+        coef(num_1)[2])
+      )
+colnames(selec) = c("Literacy", "Numeracy")
+rownames(selec) = c("$\\delta_0$", "$\\delta_1$")
+table3b<-kable(selec, caption = "Control Function estimates") %>%
+    kable_styling(bootstrap_options = c("striped", "hover")) 
+table3b
+
+
+
+
+# Prepare models
+eq_0_l <- lit_0   # Literacy, T = 0
+eq_1_l <- lit_1   # Literacy, T = 1
+eq_0_n <- num_0   # Numeracy, T = 0
+eq_1_n <- num_1   # Numeracy, T = 1
+
+
+library(huxtable)
+
+table3b_hux <- huxreg(
+  "Literacy T=0" = eq_0_l,
+  "Literacy T=1" = eq_1_l,
+  "Numeracy T=0" = eq_0_n,
+  "Numeracy T=1" = eq_1_n,
+  coefs = c(
+    "Intercept" = "(Intercept)",
+    "λ0" = "invmills_0",
+    "λ1" = "invmills_1"
+  ),
+  statistics = c(N = "nobs", R2 = "r.squared")
+)
+table3b_hux
+```
+
+**c) Comment on the results of the estimation. What does it say about the selection process?**
+
+All results are highly statistically significant. Firstly we compute the average treatment effect by comparing the baseline potential outcome without selection for treated and untreated group: $$ATE_{l}=\alpha_{1,l}-\alpha_{0,l}=6.851-5.429=1.42$$ $$ATE_{n}=\alpha_{1,n}-\alpha_{0,n}= 6.994-6.011 = 0.98$$ The results suggest that being in a private school (treated group) has positive and significant effects on a child's literacy and numeracy score (positive ATE).
+
+However, the IMR is positive and significant, indicating that treated baseline covariates are positively correlated with outcomes. This mean that there is a selection on observable and the treatment effect will be biased. Both $\delta_0$ and $\delta_1$ are positive for literacy and numeracy rates, meaning that unobservable covariates predict potential outcomes regardless of treatment status. However, since $\delta_1 > \delta_0$ student with higher unobservables are more likely to self select into private school and obtain better outcomes.
+
+## Question 4: 
+
+**Suppose that you observe a population that has a baseline average probability to enter the treatment of p0 = 0.1. An experiment manages to increase this probability to p1 = 0.2. Use the estimates obtained in the previous question to estimate the LATE associated with this experiment. What if p increases from p0 = 0.8 to p1 = 0.9? Finally, estimate the ATE, the ATT, and the ATU and comment on the results.**
+
+LATE is higher when p increases from from $p0 = 0.8$ to $p1 = 0.9$ than from $p0 = 0.1$ to $p1 = 0.2$. At the lowest baseline probability we might find people with higher resistance to the treatment therefore less willing to engage into school. In contrast, individuals with less resistance to the treatment have a higher ATE, indicating that they extract more benefits from the treatment; this is mostly observed in numeracy rates.
+
+```{r, echo=FALSE, message=F, results=T, include=TRUE}
+# LATE estimation
+Gamma = function(p0, p1, l1){
+  (p1*l1(p1) - p0*l1(p0))/(p1 - p0)
+}
+
+p0 <- 0.1
+p1 <- 0.2
+
+LATE_CF_l = coef(lit_1)[1] - coef(lit_0)[1] + 
+  (coef(lit_1)[2] - coef(lit_0)[2])*Gamma(p0, p1, lambda_1_n)
+names(LATE_CF_l) = NULL
+
+LATE_CF_n = coef(num_1)[1] - coef(num_0)[1] + 
+  (coef(num_1)[2] - coef(num_0)[2])*Gamma(p0, p1, lambda_1_n)
+names(LATE_CF_n) = NULL
+
+result = as.matrix(c(`Literacy` = LATE_CF_l, `Numeracy` = LATE_CF_n), ncol = 1)
+colnames(result) = "LATE"
+kable(result, style=  "tex", caption = "LATE for p=[0.1;0.2]") %>%  
+  kable_paper("hover", full_width = F, html_font = "Cambria") %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")
+```
+
+From a policy perspective, a ATE increasing in resistance (meaning that more resistant individuals benefit more) may mean that expanding the program yields increasing returns.
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+# new p values
+LATE_CF_l_new = coef(lit_1)[1] - coef(lit_0)[1] + 
+  (coef(lit_1)[2] - coef(lit_0)[2])*Gamma(0.8, 0.9, lambda_1_n)
+names(LATE_CF_l_new) = NULL
+
+LATE_CF_n_new = coef(num_1)[1] - coef(num_0)[1] + 
+  (coef(num_1)[2] - coef(num_0)[2])*Gamma(0.8, 0.9, lambda_1_n)
+names(LATE_CF_n_new) = NULL
+
+result_new = as.matrix(c(`Literacy` = LATE_CF_l_new, `Numeracy` = LATE_CF_n_new), ncol = 1)
+colnames(result_new) = "LATE"
+kable(result_new, style=  "tex", caption = "LATE for p=[0.8;0.9]") %>%  
+  kable_paper("hover", full_width = F, html_font = "Cambria") %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")
+```
+
+#### Treatment effects:
+
+One can get the ATE, the ATT or the ATU:
+
+$$
+\text{ATE} = E\big(Y_i(1) - Y_i(0)\big)
+= \alpha_1 - \alpha_0
+$$
+
+\$\$ \text{ATT} = E\big(Y_i(1) - Y_i(0) \mid T_i = 1\big)
+
+\$\$
+
+$$
+= \alpha_1 - \alpha_0
+\;+\;
+(\delta_1 - \delta_0)\,
+E\!\left[\lambda_1\!\big(P(Z_i)\big)\mid T_i = 1\right]
+$$
+
+\$\$ \text{ATU} = E\big(Y_i(1) - Y_i(0) \mid T_i = 0\big)
+
+\$\$
+
+$$
+= \alpha_1 - \alpha_0
+\;+\;
+(\delta_1 - \delta_0)\,
+E\!\left[\lambda_0\!\big(P(Z_i)\big)\mid T_i = 0\right]
+$$
+
+According to the results of the ATE,ATU, ATT and ATU. The untreated - the student attending public school - will receive the highest benefit from the treatment to better scores literacy and numeracy tests. On the other hand, the ATT is lower than the ATE for individuals enrolled in private school. These results highlight the high benefit of receiving private education for the student enrolled in public school.
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+# ATE, ATT, ATU estimates
+ATE_l=coef(lit_1)[1]- coef(lit_0)[1]
+ATE_n=coef(num_1)[1]- coef(num_0)[1]
+
+ATT_l = ATE_l + (coef(lit_1)[2] - coef(lit_0)[2])*mean(invmills_1)
+ATT_n = ATE_n + (coef(num_1)[2] - coef(num_0)[2])*mean(invmills_1)
+
+ATU_l = ATE_l + (coef(lit_1)[2] - coef(lit_0)[2])*mean(invmills_0)
+ATU_n = ATE_n + (coef(num_1)[2] - coef(num_0)[2])*mean(invmills_0)
+
+TE_table = rbind(c(ATE_l, ATT_l, ATU_l), c(ATE_n, ATT_n, ATU_n))
+rownames(TE_table) = c("Literacy","Numeracy")
+colnames(TE_table) = c("ATE","ATT", "ATU")
+options(knitr.kable.NA = '')
+TE_table1<-kable(TE_table, caption = "ATE by treatment status") %>%  
+  kable_paper("hover", full_width = F, html_font = "Cambria") %>% kable_styling(bootstrap_options = c("striped", "hover"),  position = "float_left")
+TE_table1
+```
+
+## Question 5
+
+### a) Express the MTE(u) function as a function of the α parameters.
+
+The marginal treatment effect function (unobserved resistance $U_i = u$) is given by:
+
+$$
+\text{MTE}(u) = E[Y_i(1) - Y_i(0) \mid U_i = u].
+$$
+
+Substituting the linear control-function form:
+
+$$
+\lambda_1(p) = E[J(U_i) - \mu_J \mid U_i \le p], 
+\qquad
+\lambda_0(p) = E[J(U_i) - \mu_J \mid U_i > p].
+$$
+
+$$
+E[Y_i \mid T_i = t, U_i] = \alpha_t + \delta_t \big[J(U_i) - E(J(U_i))\big].
+$$ yields:
+
+$$
+\begin{aligned}
+\text{MTE}(u) 
+&= \big(\alpha_1 + \delta_1 [J(u) - E(J(U_i))]\big) - \big(\alpha_0 + \delta_0 [J(u) - E(J(U_i))]\big) \\
+&= (\alpha_1 - \alpha_0) + (\delta_1 - \delta_0) [J(u) - E(J(U_i))].
+\end{aligned}
+$$
+
+If $E[J(U_i)] = 0$, as in the Heckit model, this simplifies to:
+
+$$
+\text{MTE}(u) = \alpha_1 - \alpha_0 + (\delta_1 - \delta_0) J(u).
+$$ In practice, we often estimate $E[Y_i \mid P_i]$ as a polynomial in the estimated propensity score $P_i = \hat P(T_i=1 \mid X_i)$:
+
+$$
+E[Y_i \mid P_i = u] \approx \alpha_0 + \alpha_1 u + \alpha_2 u^2 + \alpha_3 u^3 + \alpha_4 u^4.
+$$
+
+The MTE is then obtained as the derivative of $E[Y \mid P_i]$ with respect to $u$\*\*:
+
+$$
+\begin{aligned}
+\text{MTE}(u) &= \frac{\partial E[Y_i \mid P_i = u]}{\partial u} \\
+&= \alpha_1 + 2\alpha_2u + 3\alpha_3 u^2 + 4\alpha_4 u^3
+\end{aligned}
+$$
+
+**b) Estimate the MTE for different values of unobserved heterogeneity, for each outcome variable.**
+
+We estimate the MTE at different values of heterogeneity by fitting a polynomial in the propensity score and taking the derivative (marginal effect) at different levels of $u$:
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+d <- d %>% 
+  mutate(
+    p2 = pred_probit^2,
+    p3 = pred_probit^3,
+    p4 = pred_probit^4
+  )
+
+poly_reg_lit <- lm(Literacy ~ pred_probit + p2 + p3 + p4, data = d)
+poly_reg_num <- lm(Numeracy ~ pred_probit + p2 + p3 + p4, data = d)
+
+beta_Y1 <- coef(poly_reg_lit)
+beta_Y2 <- coef(poly_reg_num)
+
+# Create a grid of u values
+u_grid <- seq(0.01, 0.99, by = 0.01)
+
+# Function to calculate MTE
+calculate_mte <- function(u, beta) {
+  # MTE(u) = β1 + 2*β2*u + 3*β3*u^2 + 4*β4*u^3
+  mte <- beta[2] + 2*beta[3]*u + 3*beta[4]*u^2 + 4*beta[5]*u^3
+  return(mte)
+}
+
+# Calculate MTE for outcome Y1
+mte_1 <- sapply(u_grid, calculate_mte, beta = beta_Y1)
+
+# Calculate MTE for outcome Y2
+mte_2 <- sapply(u_grid, calculate_mte, beta = beta_Y2)
+
+mte_data <- data.frame(
+  u = u_grid,
+  MTE_1 = mte_1,
+  MTE_2 = mte_2
+)
+
+quantiles <- c(0.25, 0.50, 0.75)
+
+cat("\n=== MTE at Key Quantiles ===\n")
+for(q in quantiles) {
+  cat(sprintf("\nAt u = %.2f:\n", q))
+  cat(sprintf("  MTE(Y1) = %.4f\n", calculate_mte(q, beta_Y1)))
+  cat(sprintf("  MTE(Y2) = %.4f\n", calculate_mte(q, beta_Y2)))
+}
+```
+
+**c) Plot the two MTE functions. Interpret the variation of the function.**
+
+As seen of the graph, individuals with high resistance to the treatment have a positive and high marginal treatment effect in numeracy scores, meaning that they would be the one benefiting the most from the treatment. Among individuals with low resistance, the marginal benefit for numeracy from the treatment is low and negative at very low levels of $u$. In both subjects, the marginal treatment effect increases with higher resistance to treatment, menaing that expanding the policy yields increasing positive effects. This is coherent with the ATU being higher than the ATT.
+
+At extremes, we can talk in terms of always takers, compliers and never takers:the MTE is low for literacy on AT and negative for numeracy, between 1 and 1.5 for compliers and higher than 1.5 for NT.
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+
+mte_long <- mte_data %>%
+  pivot_longer(cols = c(MTE_1, MTE_2), 
+               names_to = "Outcome", 
+               values_to = "MTE")
+
+plot_combined <- ggplot(mte_long, aes(x = u, y = MTE, color = Outcome)) +
+  geom_line(size = 1.2) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_color_manual(
+    values = c("MTE_1" = "blue", "MTE_2" = "darkgreen"),
+    labels = c("Literacy Scores", "Numeracy Scores")
+  ) +
+  labs(
+    title = "Marginal Treatment Effects Comparison",
+    x = "Unobserved Resistance to Treatment (u)",
+    y = "MTE(u)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold"),
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+
+print(plot_combined)
+```
+
+## Question 6
+
+Using the normality assumption, we have $U_i=\Phi^{-1}(V_i)$, we define $$Z_y = \gamma_o+\gamma_1 d^{\text{pub}}+\gamma_2 Z_i$$ We define the treatment as: $$T_i = \mathbf{1}[Z_y > V_i]$$ So, $$P(T_i=1|Z_i) =  P(\mathbf{1}[Z_y > V_i]|Z_y)=P(\mathbf{1}[Z_y > V_i])$$
+
+Applying the function $\Phi$ on both sides we obtain: $$P(\Phi(Z_y) > U_i)$$
+
+$$P[\Phi(\gamma_o+\gamma_1 d^{\text{pub}}+\gamma_2 Z_i) > U_i]$$
+
+Supposing now that we condition on: $P(T_i=1|U_i=u)$
+
+Assuming that the instrument's exogeneity condition is valid, such that it is independent from the unobserved propensity score as well as potential outcomes (literacy and numeracy scores), can now show that: $$P(T_i = 1 \mid Z_i)
+= P\!\left[
+  \Phi\!\left(
+    \gamma_0 
+    + \gamma_1\, dist^{pub}_i 
+    + \gamma_2\, (dist^{pub}_i - dist^{pri}_i)
+  \right)
+  > U_i 
+  \,\middle|\,
+  dist^{pub}_i,\; (dist^{pub}_i - dist^{pri}_i)
+\right]$$ $$= P[\Phi[\gamma_0 + \gamma_1 dist^{pub} + \gamma_2 (dist^{pub} - dist^{pri})] > U_i]$$ $$P(T_i = 1 \mid U_i = u)
+= 
+\underbrace{E[T_i \mid U_i = u]}_{\text{Since treatment is binary}}$$ $$= \underbrace{
+E\!\left[
+  E\!\left(
+    T_i \mid U_i = u,\; dist^{pub}_i,\; (dist^{pub}_i - dist^{pri}_i)
+  \right)
+\right]
+}_{\text{L.I.E}}$$ $$= \int 1 \cdot \{ P(dist^{pub}_i, dist^{pub}_i - dist^{pri}_i)\} \cdot dF(dist^{pub}_i, di                                                                                                             st^{pub}_i - dist^{pri}_i) $$ $$= \int 1 \cdot \{ P(\Phi[\gamma_0 + \gamma_1 dist^{pub} + \gamma_2 (dist^{pub} - dist^{pri})] > U_i)\} \cdot dF(\Phi[dist^{pub},dist^{pub} - dist^{pri}] > U_i)$$ $$= E[\Phi[\gamma_0 + \gamma_1 dist^{pub} + \gamma_2 (dist^{pub} - dist^{pri})] > U_i] $$ $$= E[\Phi[\gamma_0 + \gamma_1 dist^{pub} + \gamma_2 (dist^{pub} - dist^{pri})] > u]$$
+
+## Question 7 :
+
+**Average treatment effects can be obtained as weighted integrals of the MTE. Recall the weights for ATE, ATU, and ATT. Using the result of the previous question, build the function that computes the weights for the ATE, the ATT, and the ATU. Plot these functions, and comment on the results.**
+
+Average treatment effects can be obtained as weighted integrals of the MTE. Recall the weights for ATE, ATU, and ATT. We recall:
+
+$$ATE=\int^1 _0 MTE(u)du $$ $$ATT=\int^1 _0 MTE(u)  \frac{P(T_i=1|U_i=u)}{P(T_i=1)}du  $$
+
+$$ATU = \int_{0}^{1} MTE(u)\frac{P(T_i = 0 \mid U_i = u)}{P(T_i = 0)} du$$
+
+To compute the weights of the MTE, we define a function that takes as inputs the sequence of unobserved resistance (u) to go to a private school (the treatment) and the data.
+
+Weigths of the MTE are the ratio of the conditional probability to be (un)treated given the level of resistance, divided by the unconditional probability to be (un)treated. We derived before that the numerator is equal to the expected mean of predicted treatment (given by the selection model), normally transformed. This equals to the predicted probability derived thanks to the probit model which includes both instruments (distance to public school and difference between distances to public and private). The denominator for the ATT is just the mean number of students going to private schools, because treatment is binary so the probability to be treated is equal to its probability.
+
+ATE weights equal 1 by construction, since we do not need to condition by treatment status. ATE integrates over the unconditional distribution of U (assumed to be uniform), which is constant and equal to 1.
+
+ATT weights correspond to the share of individuals that are treated given a certain level of resistance to the treatment (going to private school), among all pupils schooled privately. Higher ATT weights means that there are more treated individuals at this specific level of resistance, so therefore the associated MTE should have a bigger impact on the ATT than another MTE with lower ATT weights. A similar interpretation of weights can be done for ATU weights. $$\omega_{ATE}=1$$ $$\omega_{ATT}=\frac{P(T_i = 1 \mid U_i = u)}{P(T_i = 1)}$$ $$\omega_{ATU}=\frac{P(T_i = 0 \mid U_i = u)}{P(T_i = 0)}$$
+
+Because the ATT weights are decreasing in u, this means that as the reluctance to be privately schooled increase, the share of treated individuals, conditional on the distance from schools, relative to the population's treatment share, decreases. Because eager individuals make up more of the treated population, their MTE will receive a higher weight such that the ATT accurately reflects the composition of the treated population / accounts for the distribution of u, which is not constant because the sample is not random. A similar interpretation can be done for the ATU weights. Note that here, U is not actually the eagerness or reluctance of individuals, but a normalized version of it. Ranking is the same.
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+
+weights_ate <- numeric(length(u_grid))
+weights_att <- numeric(length(u_grid))
+weights_atu <- numeric(length(u_grid))
+
+P_T1 <- mean(d$pred_probit)
+P_T0 <- 1 - P_T1
+
+for (i in seq_along(u_grid)) {
+  u <- u_grid[i]
+  
+  P_T1_conditional_on_u <- mean(d$pred_probit > u)
+  P_T0_conditional_on_u <- mean(d$pred_probit <= u)
+  
+  weights_ate[i] <- 1
+  weights_att[i] <- P_T1_conditional_on_u / P_T1
+  weights_atu[i] <- P_T0_conditional_on_u / P_T0
+}
+
+weights_df <- data.frame(
+  u = u_grid,
+  ATE = weights_ate,
+  ATT = weights_att,
+  ATU = weights_atu
+)
+
+
+weights_df <- weights_df %>%
+  pivot_longer(cols = c("ATE", "ATT", "ATU"),
+               names_to = "type",
+               values_to = "weight")
+
+plot<-ggplot(weights_df, aes(x = u, y = weight, color = type)) +
+  geom_line(size = 1.1) +
+  theme_minimal() +
+  labs(title = "Weights for ATE, ATT, and ATU",
+       x = "u",
+       y = "Weight")
+
+plot
+```
+
+## Question 8: 
+
+**Combining the weights and the MTE computed at different values of unobserved heterogeneity, estimate the ATE, ATT, and the ATU.**
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+data<-left_join(weights_df,mte_data,by="u")
+
+data<-data%>%
+  mutate(weighted_1=weight*MTE_1,
+         weighted_2=weight*MTE_2)%>%
+  group_by(type)%>%
+  summarise(Literacy=sum(weighted_1)/length(u_grid),
+            Numeracy=sum(weighted_2)/length(u_grid))
+data<-t(data)
+table8 <- kable(data, 
+                caption = "Summary of Estimated Effects",
+                align = "c",      # center-align all columns
+                digits = 3,       # round numeric columns
+                booktabs = TRUE) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                full_width = FALSE,
+                position = "center") %>%
+  row_spec(0, bold = TRUE, background = "#D3D3D3") %>%  # bold header
+  column_spec(1, bold = TRUE)                             # bold first column (e.g., variable names)
+
+table8
+```
+
+## Question 9: 
+
+**Suppose that the government plans the building of new private schools. The variable dist to pri new describes what would be the new distance to the closest private school.**
+
+**a): What would be the effect of this policy on the propensity score?**
+
+The propensity score is defined as the probability that a child attends private school given their set of covariates. If the distance to private school decrease the likelihood that a child will attend private schoo will increase. The change in the propensity score is given by:
+
+$$
+\hat p_i^{\text{old}}
+= \Phi\!\big(\gamma_0 + \gamma_1\, d^{\text{pub}}_i + \gamma_2\, (d^{\text{pub}}_i-d^{\text{pri}}_i)
+$$
+
+$$
+\hat p_i^{\text{new}}
+= \Phi\!\big(\gamma_0 + \gamma_1\, d^{\text{pub,new}}_i + \gamma_2\, (d^{\text{pub}}_i-d^{\text{pri,new}}_i)
+$$
+
+$$
+\Delta p_i=\Phi\!\Big(\gamma_0 + \gamma_1\, d^{\text{pub,new}}_i+ \gamma_2\, (d^{\text{pub}}_i - d^{\text{pri,new}}_i)\Big)-\Phi\!\Big(\gamma_0 + \gamma_1\, d^{\text{pub}}_i+ \gamma_2\, (d^{\text{pub}}_i - d^{\text{pri}}_i)\Big)
+$$
+
+```{r, echo=FALSE, message=F, results=T,include=T}
+d <- d %>% 
+  mutate(diff_new = dist_to_pri_new - dist_to_pub)
+
+# Run the new probit model and predict probabilities 
+probit3 <- glm(Private ~ diff_new,
+               data = d,
+               family = binomial(link = "probit"))
+d$pred_probit3 <- predict(probit3, type = "response")
+
+# Difference in propensity scores
+d <- d %>%
+  mutate(
+    delta_p = pred_probit3 - pred_probit
+  )
+
+# Reshape data to long format for plotting
+d_long <- d %>%
+  select(pred_probit, pred_probit3) %>%
+  pivot_longer(cols = everything(),
+               names_to = "type",
+               values_to = "propensity") %>%
+  mutate(type = recode(type,
+                       pred_probit = "Old propensity",
+                       pred_probit3 = "New propensity"))
+
+# Plot overlapping histograms
+ggplot(d_long, aes(x = propensity, fill = type)) +
+  geom_histogram(alpha = 0.4, position = "identity", bins = 40) +
+  scale_fill_manual(values = c("Old propensity" = "pink", "New propensity" = "purple")) +
+  labs(title = "Distribution of Propensity Scores: Old vs New Policy",
+       x = "Propensity Score",
+       y = "Count",
+       fill = "Policy") +
+  theme_minimal()
+
+```
+
+However, by empirically computing the propensity score, the new one is lower than before by a very small margin. This is probably due to the fact that people do not change their behaviour due to new private school due to information or economic constraints.
+
+**b): What would be the effect of this policy on the outcomes? Compute the policy relevant treatment effect (briefly detail the steps) and comment.**
+
+We compute the policy relevant treatment effect : $$\int MTE(u) \omega_{PRTE}(u)du$$ We firstly compute the weights as the individual change in propensity scores over the total change in $p$. and then compute the MTE for literacy and numeracy outcomes. We multiply the MTE by the weights to obtain the weighted sum of MTE under the new policy.
+
+The new policy increase numeracy and literacy scores:
+
+```{r}
+
+d <- d %>%
+  mutate(
+    delta_p =  pred_probit_new - pred_probit
+  ) 
+
+d <- d %>%
+  mutate(
+    MTE_lit = sapply(pred_probit, calculate_mte, beta = beta_Y1),
+    MTE_num = sapply(pred_probit, calculate_mte, beta = beta_Y2)
+  )
+
+d <- d %>%
+  mutate(
+    PRTE_lit = (delta_p/sum(delta_p)) * MTE_lit,
+    PRTE_num = (delta_p/sum(delta_p)) * MTE_num
+  )
+
+policy_effects <- data.frame(
+  Outcome = c("Literacy", "Numeracy"),
+  PRTE = c(mean(d$PRTE_lit), mean(d$PRTE_num))
+)
+
+policy_table <- kable(policy_effects, caption = "Policy-Relevant Treatment Effects (PRTE)") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+
+policy_table
+
+```
+
+### c): Describe under which circumstances this estimate would be biased.
+
+The estimate would be biased if the exclusion restriction does not hold; for example, if the new private schools are located only in wealthy neighbourhoods, the new treatment would be correlated with the presence of private schools and the potential outcome. Another source of bias would be spillover effects, which would confound the treatment effect.
+
+## Question 10
+
+I don't understand the uniformity assumption of U. What if we believe that there are systematically more eager individuals in the entire population than reluctant ones? Can a transformation of the error term (such as wwhat we did with the probit model) apply here ? Why, despite the fact that we defined V s being normally distributed, do we continue speaking of U - what is u's interpretation ?
